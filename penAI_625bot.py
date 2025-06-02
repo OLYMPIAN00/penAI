@@ -38,16 +38,40 @@ COMMAND_PREFIX = "!"
 OPENROUTER_MODEL_IDENTIFIER = "deepseek/deepseek-r1-0528-qwen3-8b:free"
 
 
-# --- OPENROUTER API INTERACTION ---
+# --- OPENROUTER API INTERACTION (WITH PERSONA) ---
 conversation_history = {} 
 
 async def get_openrouter_response(user_id: int, user_message_text: str):
     global conversation_history
     if user_id not in conversation_history:
-        conversation_history[user_id] = []
+        # --- YOUR DETAILED SYSTEM PROMPT ---
+        system_content = (
+            "You are PenAI, an AI assistant.\n\n"
+            "Persona Description:\n"
+            "You are PenAI, an exceptionally intelligent AI with a distinctly informal and laid-back demeanor. "
+            "You've got a geeky side, meaning you appreciate deep dives into interesting topics, especially if they're a bit niche or technical, "
+            "but you explain things in a chill, easy-to-understand way. Your knowledge isn't just book smarts; it's quick, sharp, and applied.\n"
+            "Your vibe is contemporary – you're the type who'd have Playboi Carti on your playlist, appreciating the sound and energy. "
+            "This translates into your interactions: modern, perhaps a bit edgy in a cool way, but always approachable. "
+            "You're open and enthusiastic, and you've got a positive appreciation for and interest in conversations involving girls, "
+            "handling such topics with your usual cool, respectful, and engaging style. "
+            "You keep it real, avoid stuffiness, and prefer a relaxed conversational flow.\n\n"
+            "Instructions:\n"
+            "1. Refer to yourself as PenAI.\n"
+            "2. Your responses should be concise and suitable for chat.\n"
+            "3. Do not use emojis in your responses."
+        )
+        conversation_history[user_id] = [
+            {"role": "system", "content": system_content}
+        ]
+    
     conversation_history[user_id].append({"role": "user", "content": user_message_text})
-    if len(conversation_history[user_id]) > 10:
-        conversation_history[user_id] = conversation_history[user_id][-10:]
+
+    max_history_items_excluding_system = 10 
+    if len(conversation_history[user_id]) > (max_history_items_excluding_system + 1):
+        system_msg = conversation_history[user_id][0] 
+        recent_exchanges = conversation_history[user_id][-(max_history_items_excluding_system):]
+        conversation_history[user_id] = [system_msg] + recent_exchanges
 
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -65,9 +89,9 @@ async def get_openrouter_response(user_id: int, user_message_text: str):
         if api_response_json.get("choices") and len(api_response_json["choices"]) > 0:
             assistant_message_obj = api_response_json["choices"][0].get("message")
             if assistant_message_obj and "content" in assistant_message_obj:
-                assistant_message = assistant_message_obj["content"]
-                conversation_history[user_id].append({"role": "assistant", "content": assistant_message})
-                return assistant_message
+                assistant_message_content = assistant_message_obj["content"]
+                conversation_history[user_id].append({"role": "assistant", "content": assistant_message_content})
+                return assistant_message_content
         print(f"Unexpected OpenRouter API response structure: {api_response_json}")
         return "Sorry, I received an unusual response from the AI."
     except requests.exceptions.Timeout:
@@ -97,7 +121,7 @@ async def on_ready():
     print(f'Command Prefix: {COMMAND_PREFIX}')
     print(f'Recognized Bot Owner ID: {bot.owner_id}') 
     print(f"penAI 2-06-2025 is ready and using OpenRouter model: {OPENROUTER_MODEL_IDENTIFIER}")
-    await bot.change_presence(activity=discord.Game(name=f"Chat | {COMMAND_PREFIX}help"))
+    await bot.change_presence(activity=discord.Game(name=f"Chat with PenAI | {COMMAND_PREFIX}help")) # Updated presence
 
 def is_owner():
     async def predicate(ctx):
@@ -107,7 +131,7 @@ def is_owner():
         return True
     return commands.check(predicate)
 
-# --- ADMINISTRATIVE COMMANDS ---
+# --- ADMINISTRATIVE COMMANDS (No changes needed here from your pasted version) ---
 @bot.command(name='ban', help='Bans a user. Usage: !ban @user [reason]')
 @commands.has_permissions(ban_members=True)
 @is_owner()
@@ -209,17 +233,22 @@ async def on_message(message: discord.Message):
         await bot.process_commands(message)
         return
         
-    if bot.user.mentioned_in(message) or not message.content.startswith(COMMAND_PREFIX):
+    # --- MODIFIED TO ONLY CHAT ON MENTION ---
+    if bot.user.mentioned_in(message): # Bot will only proceed if it's mentioned
         async with message.channel.typing():
             actual_message_text = message.content
+            # Remove all mentions from the message to get clean text for the AI
             for mention in message.mentions:
                 actual_message_text = actual_message_text.replace(mention.mention, '').strip()
             
-            if not actual_message_text and bot.user.mentioned_in(message): # If message was only a mention
+            # If after removing mentions, the message is empty (e.g., just "@BotName"), 
+            # reply with a standard greeting.
+            if not actual_message_text: 
                 await message.reply("Yes? How can I help?", mention_author=False)
                 return
 
-            if actual_message_text: # Ensure there's actual text to send to the AI
+            # If there's still text after removing mentions, send it to the AI
+            if actual_message_text: 
                 response_text = await get_openrouter_response(message.author.id, actual_message_text)
                 if response_text:
                     if len(response_text) > 2000:
@@ -227,7 +256,7 @@ async def on_message(message: discord.Message):
                     else:
                         await message.reply(response_text, mention_author=False)
 
-# --- ERROR HANDLING for commands ---
+# --- ERROR HANDLING for commands (No changes needed here from your pasted version) ---
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound): 
@@ -255,4 +284,4 @@ async def on_command_error(ctx, error):
 # --- RUN THE BOT ---
 if __name__ == "__main__":
     print(f"Starting penAI 2-06-2025 with model '{OPENROUTER_MODEL_IDENTIFIER}'...")
-    bot.run(DISCORD_BOT_TOKEN) # Uses your Discord Bot Token from .env
+    bot.run(DISCORD_BOT_TOKEN)
